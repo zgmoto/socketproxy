@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <errno.h>
 #include <string.h>
 #include <netdb.h>
@@ -72,11 +73,11 @@ int main(int argc, char *argv[]) {
 
 	while (1) {
 #ifdef USE_CLIENT_FD
-		fgets(buffer + 4, 1020, stdin);
+		fgets(buffer + 4, sizeof(buffer) - 4, stdin);
 		memcpy(buffer, client_fd, 4);
 		write(sockfd, buffer, strlen(buffer + 4) + 4);
 #else
-		fgets(buffer,1024,stdin);
+		fgets(buffer, sizeof(buffer), stdin);
 		write(sockfd,buffer,strlen(buffer));
 #endif
 		//sleep(1);

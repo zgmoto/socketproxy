@@ -21,11 +21,6 @@ static char current_time[64];
 static int end_flag = 1;
 static int test = 0;
 static int daemon_run = 0;
-#ifdef CLIPROXY_WITH_SOCKS5
-static int trans_set = 0;
-#else
-static int trans_set = 1;
-#endif
 
 static char host_addr[64];
 static int host_port = DEFAULT_HOSTPORT;
@@ -37,8 +32,11 @@ char auth_user[128] = DEFAULT_USER;
 char auth_pass[128] = DEFAULT_PASS;
 #endif
 
-static int transport = DEFAULT_TRANSPORT;
+static int listen_port = 0;
 static int maxconn = SERVER_TCPLINK_NUM;
+
+static port_map_t port_maps[MAX_PORT_MAPS];
+static int port_map_count = 0;
 
 static void end_handler(int sig);
 
@@ -48,10 +46,6 @@ int istest() {
 
 int isdaemon() {
 	return daemon_run;
-}
-
-int get_trans_set() {
-	return trans_set;
 }
 
 void set_end(int end) {
@@ -114,8 +108,32 @@ char *get_auth_pass() {
 }
 #endif
 
-int get_transport() {
-	return transport;
+int get_listen_port() {
+	return listen_port;
+}
+
+int get_server_mode() {
+	return (host_addr[0] == '\0');
+}
+
+int add_port_map(int target_port, int listen_port) {
+	if (port_map_count >= MAX_PORT_MAPS)
+		return -1;
+	port_maps[port_map_count].target_port = target_port;
+	port_maps[port_map_count].listen_port = listen_port;
+	port_maps[port_map_count].listen_fd = -1;
+	port_map_count++;
+	return 0;
+}
+
+int get_port_map_count(void) {
+	return port_map_count;
+}
+
+port_map_t *get_port_map(int index) {
+	if (index < 0 || index >= port_map_count)
+		return NULL;
+	return &port_maps[index];
 }
 
 int get_max_connections_num() {
@@ -146,14 +164,17 @@ int start_params(int argc, char **argv) {
 	int ismac_replace = 0;
 	opterr = 0;
 
-	const char *optstrs = "a:c:p:e:m:d:t:h";
+	const char *optstrs = "a:c:p:e:m:d:t:l:h";
 	while ((ch = getopt(argc, argv, optstrs)) != -1) {
 		switch (ch) {
 		case 'h':
 #ifdef GWLINK_WITH_SOCKS5_PASS
-			AI_PRINTF("Usage: %s [-t print|daemon] -c <host[:port]> [-p transport] [-a user:pass] [-e macdev] [-m maxconn]\n", argv[0]);
+			AI_PRINTF("Usage: %s [-t print|daemon] [-c host[:port]] [-l listen_port] [-p target:listen] [-a user:pass] [-e macdev] [-m maxconn]\n", argv[0]);
+			AI_PRINTF("  Server: %s -l port [-a user:pass]\n", argv[0]);
+			AI_PRINTF("  Client: %s -c host:port -p target:listen [-a auth] [-m maxconn]\n", argv[0]);
 #else
-			AI_PRINTF("Usage: %s [-t print|daemon] -c <host[:port]> [-p transport] [-m maxconn]\n", argv[0]);
+			AI_PRINTF("  Server: %s -l port\n", argv[0]);
+			AI_PRINTF("  Client: %s -c host:port -p target:listen\n", argv[0]);
 #endif
 			AI_PRINTF("Default\n");
 #ifdef GWLINK_WITH_SOCKS5_PASS
@@ -185,8 +206,19 @@ int start_params(int argc, char **argv) {
 
 		case 'p':
 			isget = 1;
-			trans_set = 1;
-			transport = atoi(optarg);
+			{
+				char *colon = strchr(optarg, ':');
+				if (!colon) {
+					AI_PRINTF("Invalid -p format, use target:listen\n");
+					return -1;
+				}
+				int tport = atoi(optarg);
+				int lport = atoi(colon + 1);
+				if (add_port_map(tport, lport) < 0) {
+					AI_PRINTF("Too many port mappings (max %d)\n", MAX_PORT_MAPS);
+					return -1;
+				}
+			}
 			break;
 #ifdef GWLINK_WITH_SOCKS5_PASS
 		case 'a':
@@ -213,6 +245,11 @@ int start_params(int argc, char **argv) {
 			strcpy(macdev, optarg);
 			break;
 #endif
+		case 'l':
+			isget = 1;
+			listen_port = atoi(optarg);
+			break;
+
 		case 'm':
 			isget = 1;
 			maxconn = atoi(optarg);
